@@ -333,31 +333,15 @@
 
     <script>
         // ==========================================
-        // PHẦN 1: TƯƠNG TÁC DOM & WEBSOCKET
+        // PHẦN 1: TƯƠNG TÁC DOM & HÀNG ĐỢI SỰ KIỆN (EVENT QUEUE)
         // ==========================================
         const statusText = document.getElementById('status');
+        let eventQueue = []; // Nơi chứa các sự kiện bàn thắng chờ đến giờ phát
 
-        // Khởi tạo kết nối tới server FastAPI (cổng 8000)
-        const ws = new WebSocket('ws://localhost:8000/ws');
-
-        ws.onopen = () => {
-            console.log("Đã kết nối thành công tới WebSocket Server!");
-        };
-
-        // Lắng nghe dữ liệu (mock event) từ server đẩy xuống
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            console.log("Nhận được sự kiện:", data);
-            
-            statusText.innerText = `[${new Date(data.event_timestamp).toLocaleTimeString()}] ${data.team} Ghi bàn! Tỷ số: ${data.score}`;
+        function showGoalEvent(data) {
+            statusText.innerText = `[${new Date(data.event_timestamp).toLocaleTimeString()}] VÀOOOOO! ${data.team} vừa ghi bàn! Tỷ số: ${data.score}`;
             statusText.style.color = "#00ff00";
-        };
-
-        ws.onclose = () => {
-            console.log("Mất kết nối tới server.");
-            statusText.innerText = "Mất kết nối tới máy chủ cập nhật tỷ số...";
-            statusText.style.color = "red";
-        };
+        }
 
         // ==========================================
         // PHẦN 2: CẤU HÌNH HLS.JS (VIDEO PLAYER)
@@ -388,6 +372,59 @@
                 video.play();
             });
         }
+
+        // ==========================================
+        // PHẦN 3: ĐỒNG BỘ HÓA (SYNCHRONIZATION LOGIC)
+        // ==========================================
+        
+        // Vòng lặp đồng bộ: Chạy liên tục mỗi khi video nhích thêm 1 khung hình
+        video.addEventListener('timeupdate', () => {
+            if (eventQueue.length === 0) return;
+
+            // Kiểm tra xem thời gian của Video đã đuổi kịp thời điểm sự kiện cần hiển thị chưa
+            for (let i = 0; i < eventQueue.length; i++) {
+                let ev = eventQueue[i];
+                if (video.currentTime >= ev.target_video_time) {
+                    showGoalEvent(ev);
+                    eventQueue.splice(i, 1); // Lấy ra khỏi hàng đợi
+                    i--; // Lùi index vì array bị thay đổi
+                }
+            }
+        });
+
+        // ==========================================
+        // PHẦN 4: WEBSOCKET
+        // ==========================================
+        const ws = new WebSocket('ws://localhost:8000/ws');
+
+        ws.onopen = () => {
+            console.log("Đã kết nối thành công tới WebSocket Server!");
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log("Backend báo có bàn thắng:", data);
+            
+            // THUẬT TOÁN ĐỒNG BỘ: Tính toán thời điểm sự kiện được phép nổ trên màn hình
+            // Bằng cách cộng thêm "Độ trễ truyền hình (delay)" vào mốc thời gian hiện tại của cái video người dùng đang xem.
+            const delay_seconds = data.delay || 10;
+            
+            if (!video.paused && video.currentTime > 0) {
+                data.target_video_time = video.currentTime + delay_seconds;
+                eventQueue.push(data); // "Giam" sự kiện vào hàng đợi
+                
+                statusText.innerText = `[Hệ thống] Trọng tài báo ${data.team} ghi bàn. Chờ VAR đồng bộ lên luồng video trong ${delay_seconds} giây nữa...`;
+                statusText.style.color = "#ffa500";
+            } else {
+                // Nếu video đang lỗi / đang dừng, show luôn không cần đợi
+                showGoalEvent(data);
+            }
+        };
+
+        ws.onclose = () => {
+            statusText.innerText = "Mất kết nối tới máy chủ cập nhật tỷ số...";
+            statusText.style.color = "red";
+        };
     </script>
 
 </body>
